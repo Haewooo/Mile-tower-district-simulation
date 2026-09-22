@@ -1,0 +1,21 @@
+{
+  "name": "mile-tower-district",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "1마일 타워 지구 — 절차적 초고층 타워와 방사형 계획도시 실시간 시뮬레이션",
+  "license": "MIT",
+  "scripts": {
+    "vendor": "node build.mjs vendor",
+    "build": "node build.mjs app",
+    "all": "node build.mjs vendor app",
+    "watch": "node build.mjs app --watch",
+    "serve": "python3 -m http.server 8000",
+    "dev": "node build.mjs app --watch --serve",
+    "check": "node scripts/check-tsl.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "three": "0.186.0"
+  }
+}
