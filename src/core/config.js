@@ -25,7 +25,18 @@ export const GHOSTS = [
   { name: '부르즈 할리파 828m', th: 330 / 360 * TAU, r: 46 },
 ];
 
-export const ROAD_Y = 0.14;
+/**
+ * Ground levels, in world units (1 unit = 10 m).
+ *
+ * These were 1.4 m apart, which put the carriageway a storey above the plaza
+ * it runs through and left the street furniture buried under it. They are now
+ * separated by the few centimetres needed to keep coplanar surfaces from
+ * z-fighting, and by one real kerb height between road and footway.
+ */
+export const GROUND_Y = 0.020;          // plaza and paving disc
+export const ROAD_Y = 0.024;            // carriageway, 4 cm proud of the plaza
+export const MARK_Y = ROAD_Y + 0.003;   // painted lines
+export const WALK_Y = ROAD_Y + 0.015;   // footway, one 15 cm kerb up
 
 /** Chunking: angular sectors, and the radial bands they are cut into. */
 export const CH_SECT = 16;

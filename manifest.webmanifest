@@ -1,0 +1,16 @@
+{
+  "name": "1마일 타워 지구",
+  "short_name": "1마일 타워",
+  "description": "높이 1,609m 초고층 타워와 반경 4.7km 방사형 계획도시를 실시간으로 탐험하는 3D 개념 설계",
+  "lang": "ko",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#0d1522",
+  "theme_color": "#0d1522",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

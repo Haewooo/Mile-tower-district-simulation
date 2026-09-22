@@ -19,6 +19,7 @@ export default [
         setTimeout: 'readonly', clearTimeout: 'readonly', console: 'readonly',
         matchMedia: 'readonly', devicePixelRatio: 'readonly', location: 'readonly',
         fetch: 'readonly', Image: 'readonly', process: 'readonly', URL: 'readonly',
+        localStorage: 'readonly', sessionStorage: 'readonly',
       },
     },
     linterOptions: { reportUnusedDisableDirectives: true },

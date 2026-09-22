@@ -49,6 +49,23 @@ export async function probeWebGPU() {
 }
 
 /**
+ * Largest 2D texture the device will allocate.
+ *
+ * The old `renderer.capabilities.maxTextureSize` is gone — the node renderer
+ * keeps capabilities on the backend, and neither backend republishes this one,
+ * so it comes from the underlying device or context. A conservative 2048 if
+ * neither answers, which only costs shadow resolution.
+ */
+function readMaxTextureSize(renderer) {
+  const backend = renderer.backend;
+  const wgpuLimit = backend?.device?.limits?.maxTextureDimension2D;
+  if (wgpuLimit) return wgpuLimit;
+  const gl = backend?.gl;
+  if (gl) { try { return gl.getParameter(gl.MAX_TEXTURE_SIZE); } catch { /* fall through */ } }
+  return 2048;
+}
+
+/**
  * Pick a starting tier. This is a guess from static capability — the frame
  * pacer in quality.js is what actually settles it once frames are flowing.
  */
@@ -82,6 +99,7 @@ export async function createRenderer(canvas) {
   CAPS.webgpu = webgpu && renderer.backend?.isWebGPUBackend === true;
   CAPS.reversedDepth = renderer.reversedDepthBuffer === true;
   CAPS.maxAnisotropy = renderer.getMaxAnisotropy();
+  CAPS.maxTextureSize = readMaxTextureSize(renderer);
 
   // Without reversed depth the far plane would z-fight itself apart, so put
   // the logarithmic buffer back and accept that screen-space effects are out.

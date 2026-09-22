@@ -13,7 +13,8 @@
     "serve": "python3 -m http.server 8000",
     "dev": "node build.mjs app --watch --serve",
     "check": "node scripts/check-tsl.mjs",
-    "lint": "eslint src build.mjs scripts"
+    "lint": "eslint src build.mjs scripts",
+    "test:traffic": "node scripts/test-traffic.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",

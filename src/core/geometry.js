@@ -61,3 +61,65 @@ export function flatRing(r0, r1) {
   g.rotateX(-Math.PI / 2);
   return g;
 }
+
+
+/**
+ * A ring, broken wherever another road crosses it.
+ *
+ * Footways and edge lines were drawn as complete circles and unbroken radial
+ * strips, so at every junction the two crossed in the middle of the
+ * carriageway and left a raised kerb-height hash of pavement across it. Real
+ * ones stop at the kerb.
+ *
+ * @param {Array<[number,number]>} gaps plan-angle ranges to leave out
+ */
+export function ringArcs(r0, r1, gaps) {
+  const TAU = Math.PI * 2;
+  const norm = a => ((a % TAU) + TAU) % TAU;
+
+  // Overlapping gaps have to be merged first. Left as they are, the arc
+  // between two overlapping spans comes out reversed and the ring is drawn
+  // twice over the same stretch.
+  const raw = gaps
+    .map(([a0, a1]) => [norm(a0), norm(a1)])
+    .filter(([a0, a1]) => a1 > a0)
+    .sort((p, q) => p[0] - q[0]);
+
+  const spans = [];
+  for (const span of raw) {
+    const last = spans[spans.length - 1];
+    if (last && span[0] <= last[1]) last[1] = Math.max(last[1], span[1]);
+    else spans.push([span[0], span[1]]);
+  }
+
+  if (!spans.length) return [flatRing(r0, r1)];
+
+  const out = [];
+  for (let i = 0; i < spans.length; i++) {
+    const start = spans[i][1];
+    const end = spans[(i + 1) % spans.length][0] + (i + 1 === spans.length ? TAU : 0);
+    if (end - start > 1e-4) out.push(sectorGeo(r0, r1, start, end));
+  }
+  return out;
+}
+
+/**
+ * A radial strip, broken wherever another road crosses it.
+ *
+ * @param {Array<[number,number]>} gaps radius ranges to leave out
+ */
+export function radialRuns(a, s0, s1, w, off, gaps) {
+  const spans = gaps
+    .map(([g0, g1]) => [Math.max(s0, g0), Math.min(s1, g1)])
+    .filter(([g0, g1]) => g1 > g0)
+    .sort((p, q) => p[0] - q[0]);
+
+  const out = [];
+  let cursor = s0;
+  for (const [g0, g1] of spans) {
+    if (g0 - cursor > 1e-4) out.push(radialStrip(a, cursor, g0, w, off));
+    cursor = Math.max(cursor, g1);
+  }
+  if (s1 - cursor > 1e-4) out.push(radialStrip(a, cursor, s1, w, off));
+  return out;
+}

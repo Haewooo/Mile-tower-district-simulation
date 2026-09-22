@@ -17,12 +17,17 @@ import { createPostFX } from './render/post.js';
 import { createSky } from './world/sky.js';
 import { createRain } from './world/rain.js';
 import { createFacadeMaterial } from './materials/facade.js';
-import { TAU, EDGE, ZB, RIVER, TOWER, GHOSTS, ROAD_Y, CH_SECT, BANDS,
+import { createTraffic } from './world/traffic.js';
+import { lampGeometry, lampLensGeometry, signalGeometry, signalLensGeometry,
+         bollardGeometry, benchGeometry, planStreetFurniture,
+         crossingGeometry, planJunctions, STREET_Y } from './world/street.js';
+import { TAU, EDGE, ZB, RIVER, TOWER, GHOSTS, ROAD_Y, WALK_Y, MARK_Y, CH_SECT, BANDS,
          PRESETS, COLOR_KEYS, NUM_KEYS, VIEWS, SITE } from './core/config.js';
 import { rng, R, rand, pick, polar, floorQ, clamp, smooth, riverD,
-         NOISE, NOISE2, fbm } from './core/math.js';
+         NOISE, NOISE2, fbm, hash2 } from './core/math.js';
 import { lin } from './core/color.js';
-import { mergeGeos, sectorGeo, radialStrip, flatRing } from './core/geometry.js';
+import { mergeGeos, sectorGeo, radialStrip, flatRing,
+         ringArcs, radialRuns } from './core/geometry.js';
 
 // the app was written against a single `THREE` namespace object
 const THREE = T;
@@ -244,10 +249,12 @@ const CONCRETE=surfaceSet(1024,(A,Hd,Rd,S)=>{
 // asphalt: dark binder, bright aggregate, patched and worn areas
 const ASPHALT=surfaceSet(512,(A,Hd,Rd,S)=>{
   for(let y=0;y<S;y++)for(let x=0;x<S;x++){
-    const i=(y*S+x)*4,u=x/S*6,v=y/S*6,n=fbm(NOISE,u+30,v+30,4),p=fbm(NOISE2,u*0.5,v*0.5,2);
-    let c=0.21+(n-0.5)*0.08+(p>0.62?0.05:0);
-    const g=((x*48271+y*16807)%1009)/1009;let h=0.5+(n-0.5)*0.2;
-    if(g>0.93){c+=0.12*((g-0.93)/0.07);h+=0.2;}
+    const i=(y*S+x)*4,u=x/S*6,v=y/S*6,n=fbm(NOISE,u+30,v+30,4),p=fbm(NOISE2,u*1.7,v*1.7,3);
+    // patchier where it has been resurfaced, but a gradient rather than a
+    // step — the step read as camouflage at road scale
+    let c=0.21+(n-0.5)*0.08+(p-0.5)*0.028;
+    const g=hash2(x,y);let h=0.5+(n-0.5)*0.2;
+    if(g>0.93){c+=0.1*((g-0.93)/0.07);h+=0.07;}
     const cv=Math.round(clamp(c,0,1)*255);A[i]=cv;A[i+1]=cv;A[i+2]=Math.round(cv*1.03);A[i+3]=255;
     const hv=Math.round(clamp(h,0,1)*255);Hd[i]=Hd[i+1]=Hd[i+2]=hv;Hd[i+3]=255;
     Rd[i]=0;Rd[i+1]=Math.round(clamp(0.9-(g>0.93?0.15:0),0,1)*255);Rd[i+2]=0;Rd[i+3]=255;
@@ -257,7 +264,7 @@ CONCRETE.map.repeat.set(1,1);
 const LAWN=surfaceSet(512,(A,Hd,Rd,S)=>{
   for(let y=0;y<S;y++)for(let x=0;x<S;x++){
     const i=(y*S+x)*4,u=x/S*8,v=y/S*8,n=fbm(NOISE,u+50,v+50,5),m=fbm(NOISE2,u*4,v*4,2);
-    const sp=((x*2654435761+y*40503)>>>0)%1000/1000;
+    const sp=hash2(x+17,y+43);
     let g=0.55+(n-0.5)*0.35+(m-0.5)*0.15+(sp>0.8?0.08:sp<0.12?-0.1:0);
     A[i]=Math.round(clamp(g*0.82,0,1)*255);A[i+1]=Math.round(clamp(g*0.92,0,1)*255);A[i+2]=Math.round(clamp(g*0.62,0,1)*255);A[i+3]=255;
     const hv=Math.round(clamp(0.5+(m-0.5)*0.6+(sp-0.5)*0.3,0,1)*255);Hd[i]=Hd[i+1]=Hd[i+2]=hv;Hd[i+3]=255;
@@ -270,7 +277,7 @@ const PAVERS=surfaceSet(512,(A,Hd,Rd,S)=>{
     const seed=((cx*73856093)^(row*19349663))>>>0,tone=(seed%1000)/1000;
     const n=fbm(NOISE,x/S*24,y/S*24,3),joint=lx<2||ly<2;
     let c=0.72+(tone-0.5)*0.08+(n-0.5)*0.12;if(joint)c-=0.22;
-    const sp=((x*97+y*131)%211)/211;if(sp>0.95)c-=0.05;
+    const sp=hash2(x+91,y+7);if(sp>0.95)c-=0.05;
     const cv=clamp(c,0,1);A[i]=Math.round(cv*255);A[i+1]=Math.round(cv*0.985*255);A[i+2]=Math.round(cv*0.95*255);A[i+3]=255;
     const hv=Math.round(clamp(joint?0.25:0.6+(n-0.5)*0.1,0,1)*255);Hd[i]=Hd[i+1]=Hd[i+2]=hv;Hd[i+3]=255;
     Rd[i]=0;Rd[i+1]=Math.round((joint?0.95:0.7+(n-0.5)*0.2)*255);Rd[i+2]=0;Rd[i+3]=255;}});
@@ -349,6 +356,29 @@ M.road.map=ASPHALT.map;M.road.normalMap=ASPHALT.nrm;M.road.roughnessMap=ASPHALT.
           t.repeat.set(S2.rep,S2.rep);S2.mats.forEach(m=>{m[slot]=t;if(slot==='map')m.color.setScalar(1);m.needsUpdate=true;});});});});
   }).catch(()=>{});
 })();
+// Street furniture. The lenses are their own materials because they are the
+// only part that changes: the pole is the same grey at noon and at midnight.
+const SIGNAL_COLS={red:'#ff2d1f',amber:'#ffb01f',green:'#2fe06a'};
+Object.assign(M,{
+  lampPole:std({color:0x9aa1a7,metalness:0.2,roughness:0.5}),
+  lampLens:std({color:0x2a2c2e,roughness:0.3,emissive:0xffc981,emissiveIntensity:0}),
+  signalBody:std({color:0x4a4f54,metalness:0.2,roughness:0.6}),
+  bollard:std({color:0x7e858b,metalness:0.25,roughness:0.55}),
+  bench:std({color:0x7b6a55,roughness:0.75}),
+  kerb:std({color:0xa8a49b,roughness:0.85}),
+});
+// These are declared after the sweep above, so they convert themselves.
+['lampPole','lampLens','signalBody','bollard','bench','kerb'].forEach(k=>{
+  if(M[k].color)M[k].color.convertSRGBToLinear();
+  if(M[k].emissive)M[k].emissive.convertSRGBToLinear();
+});
+// two independent phases: what is green on the ring is red on the boulevard
+const SIGNAL_LENS={};
+[0,1].forEach(ph=>['red','amber','green'].forEach(k=>{
+  SIGNAL_LENS[ph+k]=std({color:0x1b1d1f,roughness:0.35,
+    emissive:new THREE.Color(SIGNAL_COLS[k]).convertSRGBToLinear(),emissiveIntensity:0});
+}));
+
 const FACADE_MATS=[M.tower,M.core,M.curtainCool,M.curtainCoolR,M.curtainWarm,M.precast,M.brick,M.apt,M.retail];
 const REFLECTIVE=FACADE_MATS.concat([M.metal,M.fin,M.water,M.pool,M.car,M.mech,M.doorGlass,M.canopy]);
 const WINDOW_MATS=[[M.doorGlass,0.9],[M.tower,1],[M.core,0.6],[M.curtainCool,0.85],[M.curtainCoolR,0.85],[M.curtainWarm,0.85],[M.precast,0.8],[M.brick,0.8],[M.apt,0.9],[M.retail,1.1]];
@@ -365,7 +395,7 @@ const stars=(function(){const p=[];for(let i=0;i<1600;i++){const u=R()*TAU,v=0.0
   const s=new THREE.Points(g,m);s.renderOrder=-9;s.frustumCulled=false;scene.add(s);return s;})();
 const hemi=new THREE.HemisphereLight(0xffffff,0x000000,0.8);scene.add(hemi);
 const sun=new THREE.DirectionalLight(0xffffff,2);
-sun.castShadow=true;{const big=renderer.capabilities.maxTextureSize>=8192&&!window.matchMedia('(pointer: coarse)').matches;sun.shadow.mapSize.set(big?4096:2048,big?4096:2048);}
+sun.castShadow=true;{const big=CAPS.maxTextureSize>=8192&&!window.matchMedia('(pointer: coarse)').matches;sun.shadow.mapSize.set(big?4096:2048,big?4096:2048);}
 Object.assign(sun.shadow.camera,{left:-260,right:260,top:260,bottom:-260,near:1,far:2600});
 sun.shadow.bias=-0.00025;sun.shadow.normalBias=0.04;
 scene.add(sun);scene.add(sun.target);
@@ -451,20 +481,87 @@ function flat(geo,mat,y,receive){const m=new THREE.Mesh(geo,mat);m.position.y=y;
 const riverG=new THREE.Group();riverG.position.set(Math.cos(RIVER.a)*RIVER.d,0,-Math.sin(RIVER.a)*RIVER.d);riverG.rotation.y=RIVER.a;scene.add(riverG);
 {const bank=new THREE.Mesh(mergeGeos([new THREE.PlaneGeometry((RIVER.half+RIVER.bank)*2,3000).rotateX(-Math.PI/2)],0.1),M.grass);bank.position.y=0.06;bank.receiveShadow=true;riverG.add(bank);
  const w=new THREE.Mesh(new THREE.PlaneGeometry(RIVER.half*2,3000),M.water);w.rotation.x=-Math.PI/2;w.position.y=0.1;w.receiveShadow=true;riverG.add(w);}
-{const road=[],mark=[],yel=[],walk=[];
- const dashRing=(r,period,len,w,out)=>{const n=Math.round(TAU*r/period);for(let i=0;i<n;i++){const g=new THREE.RingGeometry(r-w/2,r+w/2,1,1,i/n*TAU,len/r);g.rotateX(-Math.PI/2);out.push(g);}};
- const dashRadial=(a,r0,r1,off,period,len,w,out)=>{for(let r=r0;r+len<r1;r+=period)out.push(radialStrip(a,r,r+len,w,off));};
+const surfaces={};
+{const road=[],mark=[],yel=[],walk=[],kerb=[];
+ const dashRing=(r,period,len,w,out,gaps)=>{const n=Math.round(TAU*r/period);
+   for(let i=0;i<n;i++){const a0=i/n*TAU,a1=a0+len/r;
+     if(gaps&&gaps.some(([g0,g1])=>a1>g0&&a0<g1))continue;
+     const g=new THREE.RingGeometry(r-w/2,r+w/2,1,1,a0,len/r);g.rotateX(-Math.PI/2);out.push(g);}};
+ const dashRadial=(a,r0,r1,off,period,len,w,out,gaps)=>{
+   for(let r=r0;r+len<r1;r+=period){
+     if(gaps&&gaps.some(([g0,g1])=>r+len>g0&&r<g1))continue;
+     out.push(radialStrip(a,r,r+len,w,off));}};
+
+ // Where a road crosses a ring, the ring's footway and its painted lines have
+ // to stop: they used to run straight across the carriageway and meet the
+ // crossing road's own footway in mid-junction, leaving a raised kerb-height
+ // hash of pavement in the middle of every intersection.
+ const BLVD_HALF=4;
+ const KERB=0.03;   // 30 cm of granite between carriageway and footway
+ const ringGaps=g=>{
+   const out=[];
+   for(let k=0;k<3;k++){const a=k*TAU/3,h=BLVD_HALF/g.r;out.push([a-h,a+h]);}
+   // A ring sitting on a zone boundary is met by the streets of the zone
+   // inside it and the zone outside it. Taking only one zone's streets left
+   // every second approach walled off behind an unbroken footway.
+   for(let z=0;z<5;z++){
+     if(g.r<ZB[z]-1e-6||g.r>ZB[z+1]+1e-6)continue;
+     spokes[z].forEach(t=>{if(t.blvd)return;const h=(t.w/2)/g.r;out.push([t.a-h,t.a+h]);});
+   }
+   return out;
+ };
+ // ...and the other way round: a radial road stops at each ring it crosses.
+ //
+ // The two gap widths are deliberately different, and that asymmetry is the
+ // point. A ring's footway stops at the crossing carriageway, so it carries on
+ // over the corner; a radial road's footway stops at the ring's *whole*
+ // corridor — carriageway, kerb and footway — so it does not arrive on top of
+ // the piece already covering that corner. Breaking both at the carriageway
+ // left the two footways overlapping in a patch at every junction, coplanar
+ // and z-fighting, which read as a line running along the pavement.
+ const WALK_W=0.55;
+ const radialGaps=(r0,r1)=>rings.filter(g=>g.r>r0&&g.r<r1)
+   .map(g=>[g.r-g.w/2-KERB-WALK_W,g.r+g.w/2+KERB+WALK_W]);
+
  rings.forEach(g=>{
+   const gaps=ringGaps(g);
    road.push(flatRing(g.r-g.w/2,g.r+g.w/2));
-   walk.push(flatRing(g.r-g.w/2-0.55,g.r-g.w/2),flatRing(g.r+g.w/2,g.r+g.w/2+0.55));
-   if(g.main){yel.push(flatRing(g.r-0.09,g.r-0.03),flatRing(g.r+0.03,g.r+0.09));[-1,1].forEach(s=>dashRing(g.r+s*g.w/4,1.8,0.9,0.06,mark));}
-   else yel.push(flatRing(g.r-0.035,g.r+0.035));});
- for(let z=0;z<5;z++)spokes[z].forEach(s=>{if(s.blvd)return;road.push(radialStrip(s.a,ZB[z],ZB[z+1],s.w));
-   [-1,1].forEach(o=>walk.push(radialStrip(s.a,ZB[z],ZB[z+1],0.55,o*(s.w/2+0.27))));yel.push(radialStrip(s.a,ZB[z],ZB[z+1],0.07));});
- for(let k=0;k<3;k++){const a=k*TAU/3;road.push(radialStrip(a,30,EDGE,8));
-   [-1,1].forEach(o=>{walk.push(radialStrip(a,30,EDGE,0.6,o*4.3));dashRadial(a,30,EDGE,o*2.65,1.8,0.9,0.06,mark);mark.push(radialStrip(a,30,EDGE,0.05,o*3.85));});}
- flat(mergeGeos(road,0.35),M.road,ROAD_Y);flat(mergeGeos(walk),M.sidewalk,ROAD_Y+0.01);
- flat(mergeGeos(mark),M.marking,ROAD_Y+0.02);flat(mergeGeos(yel),M.yellow,ROAD_Y+0.02);}
+   walk.push(...ringArcs(g.r-g.w/2-0.55,g.r-g.w/2-KERB,gaps),
+             ...ringArcs(g.r+g.w/2+KERB,g.r+g.w/2+0.55,gaps));
+   kerb.push(...ringArcs(g.r-g.w/2-KERB,g.r-g.w/2,gaps),
+             ...ringArcs(g.r+g.w/2,g.r+g.w/2+KERB,gaps));
+   if(g.main){
+     yel.push(...ringArcs(g.r-0.09,g.r-0.03,gaps),...ringArcs(g.r+0.03,g.r+0.09,gaps));
+     [-1,1].forEach(s2=>dashRing(g.r+s2*g.w/4,1.8,0.9,0.06,mark,gaps));
+   } else {
+     yel.push(...ringArcs(g.r-0.035,g.r+0.035,gaps));
+   }});
+
+ for(let z=0;z<5;z++)spokes[z].forEach(s2=>{if(s2.blvd)return;
+   const gaps=radialGaps(ZB[z],ZB[z+1]);
+   road.push(radialStrip(s2.a,ZB[z],ZB[z+1],s2.w));
+   [-1,1].forEach(o=>{
+     walk.push(...radialRuns(s2.a,ZB[z],ZB[z+1],0.55-KERB,o*(s2.w/2+0.27+KERB/2),gaps));
+     kerb.push(...radialRuns(s2.a,ZB[z],ZB[z+1],KERB,o*(s2.w/2+KERB/2),gaps));});
+   yel.push(...radialRuns(s2.a,ZB[z],ZB[z+1],0.07,0,gaps));});
+
+ for(let k=0;k<3;k++){const a=k*TAU/3;
+   const gaps=radialGaps(30,EDGE);
+   road.push(radialStrip(a,30,EDGE,8));
+   [-1,1].forEach(o=>{
+     walk.push(...radialRuns(a,30,EDGE,0.6-KERB,o*(4.3+KERB/2),gaps));
+     kerb.push(...radialRuns(a,30,EDGE,KERB,o*(4.0+KERB/2),gaps));
+     dashRadial(a,30,EDGE,o*2.65,1.8,0.9,0.06,mark,gaps);
+     mark.push(...radialRuns(a,30,EDGE,0.05,o*3.85,gaps));});}
+ // Kept so the surface debug mode (press S) can recolour them one at a time.
+ surfaces.road=flat(mergeGeos(road,0.8),M.road,ROAD_Y);
+ surfaces.walk=flat(mergeGeos(walk),M.sidewalk,WALK_Y);
+ if(kerb.length)surfaces.kerb=flat(mergeGeos(kerb),M.kerb,WALK_Y);
+ surfaces.mark=flat(mergeGeos(mark),M.marking,MARK_Y);
+ surfaces.yel=flat(mergeGeos(yel),M.yellow,MARK_Y);
+ // Zebra crossings and stop bars where the boulevards meet the ring roads.
+ // Sits a hair above the lane markings so the two never z-fight.
+ {const cross=crossingGeometry({rings:rings});if(cross)surfaces.cross=flat(cross,M.marking,STREET_Y);}}
 
 /* ===================== Chunked instancing ===================== */
 const chunks=new Map();
@@ -662,7 +759,15 @@ const GEO={
     const tri=[A,E,F,A,F,B,D,C,F,D,F,E,A,D,E,B,F,C],g=new THREE.BufferGeometry();
     g.setAttribute('position',new THREE.Float32BufferAttribute([].concat.apply([],tri),3));g.computeVertexNormals();return g;})(),
   canopy:mergeGeos([new THREE.IcosahedronGeometry(0.72,0).translate(0,1.2,0),new THREE.IcosahedronGeometry(0.52,0).translate(0.34,0.95,0.18)]),
-  cone:mergeGeos([new THREE.ConeGeometry(0.6,2.0,7).translate(0,1.2,0)])
+  cone:mergeGeos([new THREE.ConeGeometry(0.6,2.0,7).translate(0,1.2,0)]),
+  lamp:lampGeometry(),
+  lampLens:lampLensGeometry(),
+  signal:signalGeometry(),
+  sigLens0:signalLensGeometry(0),
+  sigLens1:signalLensGeometry(1),
+  sigLens2:signalLensGeometry(2),
+  bollard:bollardGeometry(),
+  bench:benchGeometry()
 };
 const six=m=>[m,m,M.roof,M.roof,m,m];
 const KIND={
@@ -680,8 +785,39 @@ const KIND={
   door:{geo:GEO.box,mat:M.doorGlass,detail:true},
   canopy:{geo:GEO.box,mat:M.canopy,detail:true},
   mech:{geo:GEO.box,mat:M.mech,detail:true},
-  gable:{geo:GEO.gable,mat:M.tile}
+  gable:{geo:GEO.gable,mat:M.tile},
+
+  // Street furniture. All `detail`, so it draws only inside the LOD band and
+  // the existing point cloud carries the city beyond it.
+  lamp:{geo:GEO.lamp,mat:M.lampPole,detail:true},
+  lampLens:{geo:GEO.lampLens,mat:M.lampLens,detail:true},
+  signal:{geo:GEO.signal,mat:M.signalBody,detail:true},
+  bollard:{geo:GEO.bollard,mat:M.bollard,detail:true},
+  bench:{geo:GEO.bench,mat:M.bench,detail:true},
+  sig0red:{geo:GEO.sigLens0,mat:SIGNAL_LENS['0red'],detail:true},
+  sig0amber:{geo:GEO.sigLens1,mat:SIGNAL_LENS['0amber'],detail:true},
+  sig0green:{geo:GEO.sigLens2,mat:SIGNAL_LENS['0green'],detail:true},
+  sig1red:{geo:GEO.sigLens0,mat:SIGNAL_LENS['1red'],detail:true},
+  sig1amber:{geo:GEO.sigLens1,mat:SIGNAL_LENS['1amber'],detail:true},
+  sig1green:{geo:GEO.sigLens2,mat:SIGNAL_LENS['1green'],detail:true}
 };
+// Street furniture goes through the same chunking as the buildings, so it is
+// culled and LOD'd by machinery that already exists.
+{
+  const plan=planStreetFurniture({rings:rings,spokes:spokes});
+  plan.lamps.forEach(l=>{put('lamp',l.x,l.z,WALK_Y,l.th,1,1,1);put('lampLens',l.x,l.z,WALK_Y,l.th,1,1,1);});
+  plan.signals.forEach(g=>{
+    put('signal',g.x,g.z,WALK_Y,g.th,1,1,1);
+    const ph=g.phase?1:0;
+    put('sig'+ph+'red',g.x,g.z,WALK_Y,g.th,1,1,1);
+    put('sig'+ph+'amber',g.x,g.z,WALK_Y,g.th,1,1,1);
+    put('sig'+ph+'green',g.x,g.z,WALK_Y,g.th,1,1,1);
+  });
+  plan.bollards.forEach(b=>put('bollard',b.x,b.z,WALK_Y,b.th,1,1,1));
+  plan.benches.forEach(b=>put('bench',b.x,b.z,WALK_Y,b.th,1,1,1));
+  console.info('가로 시설물: 가로등 '+plan.lamps.length+' · 신호등 '+plan.signals.length+' · 볼라드 '+plan.bollards.length+' · 벤치 '+plan.benches.length);
+}
+
 const chunkList=[];
 const _m=new THREE.Matrix4(),_q=new THREE.Quaternion(),_up=new THREE.Vector3(0,1,0),_p=new THREE.Vector3(),_s=new THREE.Vector3(),_c=new THREE.Color();
 let instanceCount=0;
@@ -933,35 +1069,19 @@ const streetLights=(function(){
     for(let r=30;r<EDGE;r+=2.2){const [x,z]=polar(r,a);[-4.3,-1.6,1.6,4.3].forEach(o=>push(x+tx*o,z+tz*o,white));}}
   return pointCloud(pos,col,0.75);
 })();
-const traffic=(function(){
-  const cars=[];
-  rings.filter(g=>g.main).forEach(g=>{[-1,1].forEach(dir=>{[0.18,0.34].forEach(f=>{const r=g.r+dir*g.w*f,n=Math.round(TAU*r*0.13);
-    for(let i=0;i<n;i++)cars.push({t:0,r:r,a:R()*TAU,v:dir*rand(5,8)/r,red:dir>0});});});});
-  for(let k=0;k<3;k++)[-3.4,-1.9,1.9,3.4].forEach(o=>{const dir=o>0?1:-1;
-    for(let i=0;i<Math.round((EDGE-30)*0.14);i++)cars.push({t:1,a:k*TAU/3,o:o,s:rand(30,EDGE),v:dir*rand(6,10),red:dir<0});});
-  const heads=cars.filter(c=>!c.red),tails=cars.filter(c=>c.red);
-  heads.forEach((c,i)=>c.pi=i);tails.forEach((c,i)=>c.pi=i);
-  const hp=pointCloud(new Array(heads.length*3).fill(0),null,1.5),tp=pointCloud(new Array(tails.length*3).fill(0),null,1.5);
-  hp.material.color.copy(lin('#fff4dc'));tp.material.color.copy(lin('#ff4a3a'));
-  const bodyGeo=new THREE.BoxGeometry(0.46,0.15,0.2).translate(0,ROAD_Y+0.1,0);
-  const body=new THREE.InstancedMesh(bodyGeo,M.car,cars.length);body.instanceMatrix.setUsage(THREE.DynamicDrawUsage);body.frustumCulled=false;body.receiveShadow=true;
-  const CAR_COLS=['#f2f2f0','#1c1d20','#b8bcc0','#6d7278','#243a5a','#8e1c1f','#f2f2f0','#1c1d20'];
-  cars.forEach((car,i)=>body.setColorAt(i,_c.set(pick(CAR_COLS)).convertSRGBToLinear()));
-  scene.add(body);
-  const E=body.instanceMatrix.array;
-  function step(dt,lights){
-    const ha=hp.geometry.attributes.position.array,ta=tp.geometry.attributes.position.array;
-    for(let i=0;i<cars.length;i++){const car=cars[i];let x,z,rot;
-      if(car.t===0){car.a+=car.v*dt;x=car.r*Math.sin(car.a);z=car.r*Math.cos(car.a);rot=car.a;}
-      else{car.s+=car.v*dt;if(car.s>EDGE)car.s=30;if(car.s<30)car.s=EDGE;x=car.s*Math.sin(car.a)+car.o*Math.cos(car.a);z=car.s*Math.cos(car.a)-car.o*Math.sin(car.a);rot=car.a+Math.PI/2;}
-      const co=Math.cos(rot),si=Math.sin(rot),o=i*16;
-      E[o]=co;E[o+1]=0;E[o+2]=-si;E[o+3]=0;E[o+4]=0;E[o+5]=1;E[o+6]=0;E[o+7]=0;E[o+8]=si;E[o+9]=0;E[o+10]=co;E[o+11]=0;E[o+12]=x;E[o+13]=0;E[o+14]=z;E[o+15]=1;
-      if(lights){const arr=car.red?ta:ha,j=car.pi*3;arr[j]=x;arr[j+1]=0.45;arr[j+2]=z;}}
-    body.instanceMatrix.needsUpdate=true;
-    if(lights){hp.geometry.attributes.position.needsUpdate=true;tp.geometry.attributes.position.needsUpdate=true;}
-  }
-  return {groups:[hp,tp],step:step};
-})();
+// Cars run on lanes that know where the stop lines are; see world/traffic.js.
+// `signalGreen` is read once per frame there, and it is the same function the
+// signal heads use, so a red light and a stopped car can never disagree.
+const junctions=planJunctions({rings:rings});
+const traffic=createTraffic({
+  rings:rings,
+  junctions:junctions,
+  carMaterial:M.car,
+  makePoints:pointCloud,
+  signalGreen:function(ph){return signalStateAt(signalT,ph)==='green';}
+});
+scene.add(traffic.mesh);
+console.info('교통: 차량 '+traffic.count+' · 차선 '+traffic.laneCount+' · 교차로 '+junctions.length);
 const soffitPts=pointCloud(soffitLights,null,0.5);soffitPts.material.color.copy(lin('#ffe2b5'));
 const crownPts=pointCloud(crownLights,null,0.42);crownPts.material.color.copy(lin('#ffdcaa'));
 const beaconPts=pointCloud(beacons.concat(towerBeacons),null,2.2);beaconPts.material.color.copy(lin('#ff3b30'));
@@ -1018,6 +1138,38 @@ function mixState(dst,a,b,t){COLOR_KEYS.forEach(c=>dst[c].copy(a[c]).lerp(b[c],t
 function toGray(c,amt,tint){const l=c.r*0.3+c.g*0.59+c.b*0.11;GRAY.setRGB(l*(tint||1)*0.98,l*(tint||1),l*(tint||1)*1.05);c.lerp(GRAY,amt);}
 // wet materials keep their dry values so rain can darken and polish them
 [M.road,M.sidewalk,M.paving,M.ground,M.grass,M.terrace,M.country,M.stone].forEach(m=>m.envMapIntensity=0.3);
+// Signal cycle. Two phases in opposition, so a junction always reads as one
+// direction moving and the other held. Amber only appears on the way to red,
+// which is the part that makes it look like a real signal rather than a
+// flashing light.
+const SIGNAL_CYCLE={green:11,amber:2.5,red:1.0};   // seconds; red is the all-red overlap
+const SIGNAL_PERIOD=(SIGNAL_CYCLE.green+SIGNAL_CYCLE.amber+SIGNAL_CYCLE.red)*2;
+let signalT=0;
+
+/** Which lamp is lit for a phase, at time t within the cycle. */
+function signalStateAt(t,phase){
+  const half=SIGNAL_PERIOD/2;
+  const local=((t+(phase?half:0))%SIGNAL_PERIOD+SIGNAL_PERIOD)%SIGNAL_PERIOD;
+  if(local<SIGNAL_CYCLE.green)return 'green';
+  if(local<SIGNAL_CYCLE.green+SIGNAL_CYCLE.amber)return 'amber';
+  return 'red';
+}
+
+function signalStep(dt){
+  signalT+=dt;
+  // Lenses are dim but not black when unlit — a signal head in daylight still
+  // shows its lamps, and at night the housing would otherwise vanish.
+  const dayOff=0.015,nightOff=0.03;
+  const off=dayOff+(nightOff-dayOff)*S.street;
+  const on=1.6+1.9*S.street;
+  for(let ph=0;ph<2;ph++){
+    const lit=signalStateAt(signalT,ph);
+    ['red','amber','green'].forEach(k=>{
+      SIGNAL_LENS[ph+k].emissiveIntensity=(k===lit?on:off);
+    });
+  }
+}
+
 const WETTABLE=[[M.road,0.62],[M.sidewalk,0.55],[M.paving,0.55],[M.ground,0.5],[M.grass,0.25],[M.terrace,0.5],[M.stone,0.45],[M.concrete,0.3],[M.concreteFlat,0.3]];
 WETTABLE.forEach(w=>{w[2]=w[0].roughness;w[3]=w[0].color.clone();});
 function computeSky(){
@@ -1051,6 +1203,7 @@ function applyState(){
   M.crownGlow.emissiveIntensity=S.garden*0.28;crownPts.material.opacity=Math.min(1,S.garden);crownPts.visible=S.garden>0.02;
   soffitPts.material.opacity=Math.min(1,S.garden);M.poolWater.emissiveIntensity=S.garden*0.35;
   streetLights.material.opacity=S.street;streetLights.visible=S.street>0.01;
+  M.lampLens.emissiveIntensity=S.street*2.6;
   traffic.groups.forEach(g=>{g.material.opacity=S.traffic;g.visible=S.traffic>0.01;});
   stars.material.opacity=S.stars*(1-WX.overcast);stars.visible=stars.material.opacity>0.01;
   cloudMats.forEach(m=>{m.color.copy(S.cloud);m.opacity=S.cloudOp;});
@@ -1203,7 +1356,8 @@ canvas.addEventListener('pointerup',endPointer);
 canvas.addEventListener('pointercancel',endPointer);
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 canvas.addEventListener('wheel',e=>{
-  if(fp){e.preventDefault();return;}
+  // nothing to zoom in first person, so the wheel picks walking pace instead
+  if(fp){e.preventDefault();if(!EL.riding)setSpeedIdx(speedIdx+(e.deltaY<0?1:-1));return;}
   e.preventDefault();touched();sync();
   if(e.ctrlKey||Math.abs(e.deltaX)<1){
     const now=performance.now();
@@ -1224,6 +1378,28 @@ const PLAYER={x:0,y:0,z:0,vy:0,yaw:0,pitch:0,ground:true,fly:false,sneak:false,s
 const MC={eye:0.162,eyeSneak:0.127,radius:0.03,height:0.18,walk:0.4317,sprint:0.5612,sneakV:0.1295,fly:1.092,flySprint:2.184,
           flyVert:0.75,gravity:3.2,jump:0.894,step:0.06,fov:70};
 const keys={};
+
+// Walking pace is Minecraft's, which is right for looking at a doorway and far
+// too slow for crossing a 4.7 km district. The multiplier scales every mode —
+// walk, sprint, sneak and fly — so the relationships between them hold.
+const SPEEDS=[0.25,0.5,1,2,4,8,16];
+let speedIdx=2;
+let speedScale=1;
+try{const saved=parseInt(localStorage.getItem('fpSpeedIdx'),10);
+    if(saved>=0&&saved<SPEEDS.length)speedIdx=saved;}catch{/* private mode */}
+speedScale=SPEEDS[speedIdx];
+
+function setSpeedIdx(i){
+  speedIdx=clamp(i,0,SPEEDS.length-1);
+  speedScale=SPEEDS[speedIdx];
+  const el=$('#fpSpeedVal');
+  if(el)el.textContent=(speedScale<1?speedScale.toFixed(2).replace(/0+$/,'').replace(/\.$/,''):speedScale.toFixed(1))+'×';
+  const slower=$('#fpSlower'),faster=$('#fpFaster');
+  if(slower)slower.disabled=speedIdx===0;
+  if(faster)faster.disabled=speedIdx===SPEEDS.length-1;
+  try{localStorage.setItem('fpSpeedIdx',String(speedIdx));}catch{/* private mode */}
+}
+
 const tapT={space:0,w:0};
 // ---- colliders: every building mass plus the tower (lobby drum, core, wings per segment)
 const colliders=[],CG=10,cgrid=new Map();
@@ -1246,7 +1422,11 @@ function nearby(x,z){const out=[],seen=new Set();
 function toLocal(c,x,z){const dx=x-c.x,dz=z-c.z;return [dx*c.c-dz*c.s,dx*c.s+dz*c.c];}
 function toWorld(c,lx,lz){return [lx*c.c+lz*c.s,-lx*c.s+lz*c.c];}
 function inside(c,x,z,pad){if(c.round)return Math.hypot(x-c.x,z-c.z)<c.hx+pad;const [lx,lz]=toLocal(c,x,z);return Math.abs(lx)<c.hx+pad&&Math.abs(lz)<c.hz+pad;}
-function supportAt(x,z,feet){let g=0;for(const c of nearby(x,z))if(c.y1<=feet+MC.step&&c.y1>g&&inside(c,x,z,0))g=c.y1;return g;}
+// Inside the district the walkable surface is the street, not y=0. Without
+// this the player stands at zero while the carriageway is above their head,
+// which is what made the asphalt look like something you could walk through.
+const baseGround=(x,z)=>Math.hypot(x,z)<=EDGE+4?ROAD_Y:0;
+function supportAt(x,z,feet){let g=baseGround(x,z);for(const c of nearby(x,z))if(c.y1<=feet+MC.step&&c.y1>g&&inside(c,x,z,0))g=c.y1;return g;}
 function ceilingAt(x,z,feet){let g=1e9;for(const c of nearby(x,z))if(c.y0>=feet+0.05&&c.y0<g&&inside(c,x,z,0))g=c.y0;return g;}
 function pushOut(p){
   const cs=nearby(p.x,p.z);
@@ -1269,7 +1449,7 @@ function fpStep(dt){
   P.sneak=!!(keys.ShiftLeft||keys.ShiftRight||keys.sneak);
   if(t<=0)P.sprint=false;
   if((keys.ControlLeft||keys.ControlRight||keys.sprintBtn)&&t>0)P.sprint=true;
-  let sp=P.fly?(P.sprint?MC.flySprint:MC.fly):(P.sneak?MC.sneakV:(P.sprint?MC.sprint:MC.walk));
+  let sp=(P.fly?(P.sprint?MC.flySprint:MC.fly):(P.sneak?MC.sneakV:(P.sprint?MC.sprint:MC.walk)))*speedScale;
   const fx=-Math.sin(P.yaw),fz=-Math.cos(P.yaw),rx=Math.cos(P.yaw),rz=-Math.sin(P.yaw);
   let mx=fx*t+rx*st,mz=fz*t+rz*st;const ml=Math.hypot(mx,mz);if(ml>0){mx/=ml;mz/=ml;}
   const ox=P.x,oz=P.z;
@@ -1325,12 +1505,18 @@ function exitFP(){
 function toggleFP(){fp?exitFP():enterFP();}
 document.querySelectorAll('[data-fp]').forEach(b=>b.addEventListener('click',toggleFP));
 $('#fpExit').addEventListener('click',exitFP);
+{const slower=$('#fpSlower'),faster=$('#fpFaster');
+ if(slower)slower.addEventListener('click',()=>setSpeedIdx(speedIdx-1));
+ if(faster)faster.addEventListener('click',()=>setSpeedIdx(speedIdx+1));
+ setSpeedIdx(speedIdx);}
 const TIMES=['day','sunset','night'];
 $('#fpTime').addEventListener('click',()=>{const seq=[6.3,12.5,18.15,21.5];let i=0;seq.forEach((h,j)=>{if(Math.abs(h-CLOCK.target)<Math.abs(seq[i]-CLOCK.target))i=j;});CLOCK.play=false;setHour(seq[(i+1)%seq.length]);});
 function look(dx,dy,k){PLAYER.yaw-=dx*k;PLAYER.pitch=clamp(PLAYER.pitch-dy*k,-1.553,1.553);}
 window.addEventListener('keydown',e=>{
   if(e.code==='F5'||(e.code==='KeyV'&&!e.repeat)){e.preventDefault();toggleFP();return;}
   if(!fp)return;
+  if(e.code==='BracketLeft'&&!e.repeat){setSpeedIdx(speedIdx-1);return;}
+  if(e.code==='BracketRight'&&!e.repeat){setSpeedIdx(speedIdx+1);return;}
   if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
   if(!e.repeat){const now=performance.now();
     if(e.code==='Space'){if(now-tapT.space<300)PLAYER.fly=!PLAYER.fly,PLAYER.vy=0;tapT.space=now;}
@@ -1576,6 +1762,29 @@ let postFX=null;
 try{postFX=createPostFX({renderer:renderer,scene:scene,camera:camera,tier:tier});}
 catch(e){console.error('post-processing unavailable, rendering forward',e);postFX=null;}
 
+// Surface debug: press S to flood each ground surface with a flat colour, so a
+// stray line can be named instead of guessed at. Press again to restore.
+{
+  const DEBUG_COLS={road:'#3355ff',walk:'#ff3bb0',kerb:'#ffd400',mark:'#00e5ff',yel:'#7CFC00',cross:'#ff6a00'};
+  let on=false;const saved=new Map();
+  window.addEventListener('keydown',e=>{
+    if(e.key!=='s'&&e.key!=='S')return;
+    if(e.target&&/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))return;
+    if(e.metaKey||e.ctrlKey||e.altKey)return;
+    on=!on;
+    Object.keys(surfaces).forEach(k=>{
+      const mesh=surfaces[k];if(!mesh)return;
+      if(on){
+        if(!saved.has(k))saved.set(k,mesh.material);
+        mesh.material=new THREE.MeshBasicNodeMaterial({color:lin(DEBUG_COLS[k]||'#ffffff')});
+      }else if(saved.has(k))mesh.material=saved.get(k);
+    });
+    console.info(on
+      ?'표면 디버그 — 차도:파랑  보도:분홍  연석:노랑  차선:하늘  중앙선:연두  횡단보도:주황'
+      :'표면 디버그 해제');
+  });
+}
+
 /* ===================== UI ===================== */
 function press(attr,val){document.querySelectorAll('['+attr+']').forEach(b=>b.setAttribute('aria-pressed',String(b.getAttribute(attr)===val)));}
 const PRESET_HOURS={sunrise:6.3,noon:12.5,sunset:18.15,night:21.5};
@@ -1608,14 +1817,22 @@ function updateShadow(){
   sun.position.copy(camTarget).addScaledVector(lightDir,1400);
   sun.target.position.copy(camTarget);sun.target.updateMatrixWorld();
 }
+let visibleChunks=0;
 function cull(){
   projM.multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse);
-  frustum.setFromProjectionMatrix(projM);
+  // The near and far planes depend on the depth convention, and both of ours
+  // changed with the renderer: WebGPU clips z to 0..1 where WebGL used -1..1,
+  // and reversed depth swaps the two ends on top of that. Extracting the
+  // frustum with the old defaults leaves those planes wrong, which quietly
+  // stops the chunk test from rejecting anything — the city renders whole,
+  // every frame, and only shows it when you zoom out far enough to see it all.
+  frustum.setFromProjectionMatrix(projM,camera.coordinateSystem,camera.reversedDepth===true);
   const camPos=camera.position;
+  visibleChunks=0;
   for(let i=0;i<chunkList.length;i++){
     const c=chunkList[i],vis=frustum.intersectsSphere(c.sphere);
     c.group.visible=vis;
-    if(vis){const d=c.sphere.center.distanceTo(camPos);const det=d<260;for(let j=0;j<c.detail.length;j++)c.detail[j].visible=det;}
+    if(vis){visibleChunks++;const d=c.sphere.center.distanceTo(camPos);const det=d<260;for(let j=0;j<c.detail.length;j++)c.detail[j].visible=det;}
   }
 }
 function loop(ts){
@@ -1639,6 +1856,7 @@ function loop(ts){
   updateShadow();
   sky.position.copy(camera.position);stars.position.copy(camera.position);
   traffic.step(dt,S.traffic>0.01);
+  signalStep(dt);
   WATER_N.offset.y+=dt*0.004;WATER_N.offset.x+=dt*0.0015;
   beaconPts.visible=S.street>0.3&&(clockT%1.6)<0.3;beaconPts.material.opacity=1;
   const lab=smooth(700,1100,cam.r);districtLabels.visible=lab>0.01;districtLabels.children.forEach(s=>{s.material.opacity=lab;const w=cam.r*0.13;s.scale.set(w,w*176/1024,1);});

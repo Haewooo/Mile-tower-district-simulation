@@ -15,6 +15,7 @@ import { readFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
+import os from 'node:os';
 
 const argv = process.argv.slice(2);
 const targets = argv.filter(a => !a.startsWith('--'));
@@ -95,6 +96,7 @@ if (targets.length === 0) { console.error('nothing to build: pass "vendor" and/o
 
 if (serve) {
   const TYPES = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.json':'application/json',
+                  '.webmanifest':'application/manifest+json', '.svg':'image/svg+xml',
                   '.exr':'image/aces', '.jpg':'image/jpeg', '.png':'image/png', '.md':'text/markdown' };
   http.createServer(async (req, res) => {
     let p = decodeURIComponent(req.url.split('?')[0]);
@@ -107,5 +109,12 @@ if (serve) {
                            'cache-control': 'no-store' });
       res.end(body);
     } catch { res.writeHead(404).end('not found'); }
-  }).listen(8000, () => console.log('serving http://localhost:8000'));
+  }).listen(8000, () => {
+    // Bound on every interface, so a phone on the same network can reach it —
+    // localhost is the one address that will not work from another device.
+    console.log('  http://localhost:8000');
+    for (const list of Object.values(os.networkInterfaces()))
+      for (const n of list || [])
+        if (n.family === 'IPv4' && !n.internal) console.log(`  http://${n.address}:8000   (같은 네트워크의 다른 기기)`);
+  });
 }

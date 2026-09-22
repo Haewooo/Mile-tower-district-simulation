@@ -52,6 +52,22 @@ export function makeNoise(seed) {
   };
 }
 
+/**
+ * Integer hash for per-pixel speckle.
+ *
+ * The surfaces used to scramble pixels with `(x*a + y*b) % p`, which is linear
+ * in both axes: walk along a row and the value steps by a constant, so the
+ * "random" gravel landed on a perfect diagonal lattice. Turned into a normal
+ * map it read as corduroy — regular enough to see from across the street.
+ *
+ * This mixes with shifts and multiplies, so neighbouring pixels share nothing.
+ */
+export function hash2(x, y) {
+  let h = (Math.imul(x, 374761393) + Math.imul(y, 668265263)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177) | 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
 export const NOISE = makeNoise(9137);
 export const NOISE2 = makeNoise(5521);
 

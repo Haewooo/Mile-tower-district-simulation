@@ -11,6 +11,12 @@
 <meta property="og:image" content="docs/preview.jpg">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8F%99%EF%B8%8F%3C/text%3E%3C/svg%3E">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="1마일 타워">
+<meta name="mobile-web-app-capable" content="yes">
 <title>1마일 타워 지구 조감도</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -63,8 +69,12 @@ button:disabled{opacity:.45}
 #cross{position:absolute;left:50%;top:50%;width:22px;height:22px;transform:translate(-50%,-50%);opacity:.9}
 #cross:before,#cross:after{content:"";position:absolute;background:#fff;mix-blend-mode:difference}
 #cross:before{left:10px;top:0;width:2px;height:22px}#cross:after{left:0;top:10px;width:22px;height:2px}
-#fpTop{position:absolute;right:12px;top:calc(env(safe-area-inset-top,0px) + 12px);display:flex;align-items:center;gap:4px;padding:4px;pointer-events:auto}
+#fpTop{position:absolute;right:12px;top:calc(env(safe-area-inset-top,0px) + 12px);display:flex;align-items:center;
+  flex-wrap:wrap;justify-content:flex-end;gap:4px;row-gap:4px;padding:4px;pointer-events:auto;max-width:calc(100vw - 24px)}
 #fpInfo{font-size:13px;color:var(--muted);padding:0 8px;white-space:nowrap}
+#fpSpeed{display:flex;align-items:center;gap:2px;border-left:1px solid var(--line);border-right:1px solid var(--line);padding:0 2px;margin:0 2px}
+#fpSpeed button{min-width:32px;padding:6px 4px;font-size:16px;line-height:1}
+#fpSpeedVal{font-size:13px;font-variant-numeric:tabular-nums;min-width:38px;text-align:center;color:var(--ink)}
 #fpHelp{position:absolute;left:12px;top:calc(env(safe-area-inset-top,0px) + 64px);transition:opacity .8s;padding:10px 12px;font-size:12px;line-height:1.6;color:var(--muted);max-width:260px;pointer-events:none}
 #fpUI.touch #fpHelp .desk{display:none}#fpUI:not(.touch) #fpHelp .mob{display:none}
 .pad{position:absolute;display:none;pointer-events:auto;touch-action:none}
@@ -74,6 +84,22 @@ button:disabled{opacity:.45}
 .pad button{background:rgba(20,26,34,.42);color:#fff;border:1px solid rgba(255,255,255,.28);border-radius:12px;font-size:18px;min-height:0;padding:0;-webkit-user-select:none;user-select:none}
 .pad button.on{background:rgba(143,185,220,.6)}
 #acts button{border-radius:50%;font-size:13px}
+
+/* Touch. 36px is a comfortable mouse target and a frustrating finger one, so
+   anything tapped grows to the 44px both platforms ask for. The on-screen pad
+   is already sized for thumbs and is left alone. */
+@media (pointer: coarse){
+  button{min-height:44px;padding:10px 13px}
+  #fpSpeed button{min-width:44px}
+  .pad button{min-height:0}
+  #play{min-width:48px}
+  #elStops button{min-height:40px}
+}
+/* Narrow phones: the altitude readout is what pushes this bar off-screen. */
+@media (max-width:430px){
+  #fpInfo{font-size:12px;padding:0 6px}
+  #fpTop{gap:3px;right:8px}
+}
 #err{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);padding:16px 18px;max-width:min(420px,calc(100vw - 32px));font-size:14px;line-height:1.6}
 #err p{margin:0 0 8px}#err p:last-of-type{margin-bottom:0}
 #errHint{color:var(--muted);font-size:13px}#errHint:empty{display:none}
@@ -119,10 +145,18 @@ button:disabled{opacity:.45}
 </div>
 <div id="fpUI" hidden>
   <div id="cross"></div>
-  <div id="fpTop" class="panel"><span id="fpInfo">걷기</span><button id="fpTime">시간</button><button id="fpExit">나가기</button></div>
+  <div id="fpTop" class="panel">
+    <span id="fpInfo">걷기</span>
+    <div id="fpSpeed" role="group" aria-label="이동 속도">
+      <button id="fpSlower" aria-label="느리게">−</button>
+      <span id="fpSpeedVal" aria-live="polite">1.0×</span>
+      <button id="fpFaster" aria-label="빠르게">+</button>
+    </div>
+    <button id="fpTime">시간</button><button id="fpExit">나가기</button>
+  </div>
   <div id="fpHelp" class="panel">
-    <div class="desk">클릭: 마우스 잠금 · WASD 이동<br>Space 점프 · 두 번: 비행<br>Shift 웅크리기·하강 · Ctrl 달리기<br>F5 / V 시점 전환 · Esc 해제</div>
-    <div class="mob">화면 끌기: 시선 · 방향키: 이동<br>점프 두 번: 비행 · 누르고 있기: 상승</div>
+    <div class="desk">클릭: 마우스 잠금 · WASD 이동<br>Space 점프 · 두 번: 비행<br>Shift 웅크리기·하강 · Ctrl 달리기<br>[ ] 또는 휠: 이동 속도<br>F5 / V 시점 전환 · Esc 해제</div>
+    <div class="mob">화면 끌기: 시선 · 방향키: 이동<br>점프 두 번: 비행 · 누르고 있기: 상승<br>상단 −/+ : 이동 속도</div>
   </div>
   <div id="elPrompt" class="panel" hidden><button id="elCall">셔틀 탑승 (E)</button></div>
   <div id="elPanel" class="panel" hidden>
@@ -175,6 +209,33 @@ button:disabled{opacity:.45}
          '브라우저가 file:// 에서 모듈 스크립트를 차단합니다. 폴더에서 다음을 실행한 뒤 http://localhost:8000 을 여세요.',
          'python3 -m http.server 8000');
     return;
+  }
+
+  // Offline support. Needs a secure context — https, or localhost.
+  //
+  // Not in development, though. The worker serves cache-first, which is right
+  // for a deployed build and actively harmful while one is being edited: the
+  // page keeps handing back the bundle it cached first and every rebuild looks
+  // like it did nothing. On localhost we tear down any worker and cache a
+  // previous visit left behind, so a reload means a reload.
+  var DEV = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+            || /^\d+\.\d+\.\d+\.\d+$/.test(location.hostname);
+
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    if (DEV) {
+      navigator.serviceWorker.getRegistrations().then(function (rs) {
+        var had = rs.length > 0;
+        rs.forEach(function (r) { r.unregister(); });
+        if (window.caches) caches.keys().then(function (ks) { ks.forEach(function (k) { caches.delete(k); }); });
+        if (had) { console.info('개발 모드: 서비스 워커를 해제했습니다. 한 번 더 새로고침하세요.'); }
+      }).catch(function () {});
+    } else {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('./sw.js').catch(function (e) {
+          console.info('offline cache unavailable:', e && e.message);
+        });
+      });
+    }
   }
 
   // A module that fails to parse or resolve fires window.onerror with nothing
