@@ -74,7 +74,11 @@ button:disabled{opacity:.45}
 .pad button{background:rgba(20,26,34,.42);color:#fff;border:1px solid rgba(255,255,255,.28);border-radius:12px;font-size:18px;min-height:0;padding:0;-webkit-user-select:none;user-select:none}
 .pad button.on{background:rgba(143,185,220,.6)}
 #acts button{border-radius:50%;font-size:13px}
-#err{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);padding:16px 18px;max-width:300px;font-size:14px;line-height:1.6}
+#err{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);padding:16px 18px;max-width:min(420px,calc(100vw - 32px));font-size:14px;line-height:1.6}
+#err p{margin:0 0 8px}#err p:last-of-type{margin-bottom:0}
+#errHint{color:var(--muted);font-size:13px}#errHint:empty{display:none}
+#errDetail{margin:10px 0 0;padding:9px 11px;background:color-mix(in srgb,var(--ink) 7%,transparent);border-radius:8px;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word;max-height:9em;overflow:auto;-webkit-user-select:all;user-select:all}
+#loadStep{color:var(--muted)}
 </style>
 </head>
 <body>
@@ -136,9 +140,54 @@ button:disabled{opacity:.45}
     <button data-k="sneak">하강</button><span></span>
   </div>
 </div>
-<div id="loading" class="panel">도시를 짓는 중</div>
-<div id="err" class="panel" hidden>이 기기에서 3D를 표시할 수 없습니다. WebGL을 지원하는 브라우저에서 다시 열어 주세요.</div>
+<div id="loading" class="panel">도시를 짓는 중<span id="loadStep"></span></div>
+<div id="err" class="panel" hidden>
+  <p id="errMsg">이 기기에서 3D를 표시할 수 없습니다.</p>
+  <p id="errHint"></p>
+  <pre id="errDetail" hidden></pre>
+</div>
 
+<!--
+  A classic script, deliberately: it has to run even when the module below
+  never loads. Opening this file over file:// blocks the module for CORS, and
+  without this the page sits on "도시를 짓는 중" forever with nothing in the UI
+  to say why.
+-->
+<script>
+(function(){
+  var err = document.getElementById('err');
+  var msg = document.getElementById('errMsg');
+  var hint = document.getElementById('errHint');
+  var detail = document.getElementById('errDetail');
+
+  function show(title, advice, text) {
+    var loading = document.getElementById('loading');
+    if (loading) loading.hidden = true;
+    msg.textContent = title;
+    hint.textContent = advice || '';
+    if (text) { detail.textContent = text; detail.hidden = false; }
+    err.hidden = false;
+  }
+  window.__fail = show;
+
+  if (location.protocol === 'file:') {
+    show('로컬 파일로는 실행할 수 없습니다.',
+         '브라우저가 file:// 에서 모듈 스크립트를 차단합니다. 폴더에서 다음을 실행한 뒤 http://localhost:8000 을 여세요.',
+         'python3 -m http.server 8000');
+    return;
+  }
+
+  // A module that fails to parse or resolve fires window.onerror with nothing
+  // useful, so say what actually tends to be wrong.
+  window.addEventListener('error', function (e) {
+    if (e.target && e.target.tagName === 'SCRIPT') {
+      show('앱을 불러오지 못했습니다.',
+           'dist/app.js 를 찾을 수 없습니다. npm run build 를 실행했는지 확인해 주세요.',
+           e.target.src || '');
+    }
+  }, true);
+})();
+</script>
 <script type="module" src="./dist/app.js"></script>
 </body>
 </html>

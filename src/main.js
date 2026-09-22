@@ -12,11 +12,17 @@
  * promise.
  */
 import * as T from '../vendor/three.bundle.min.js';
-import { createRenderer, describe, CAPS, TIERS } from './render/context.js';
+import { createRenderer, describe, CAPS } from './render/context.js';
 import { createPostFX } from './render/post.js';
 import { createSky } from './world/sky.js';
 import { createRain } from './world/rain.js';
 import { createFacadeMaterial } from './materials/facade.js';
+import { TAU, EDGE, ZB, RIVER, TOWER, GHOSTS, ROAD_Y, CH_SECT, BANDS,
+         PRESETS, COLOR_KEYS, NUM_KEYS, VIEWS, SITE } from './core/config.js';
+import { rng, R, rand, pick, polar, floorQ, clamp, smooth, riverD,
+         NOISE, NOISE2, fbm } from './core/math.js';
+import { lin } from './core/color.js';
+import { mergeGeos, sectorGeo, radialStrip, flatRing } from './core/geometry.js';
 
 // the app was written against a single `THREE` namespace object
 const THREE = T;
@@ -25,81 +31,32 @@ THREE.ColorManagement.enabled = false;
 async function boot() {
 'use strict';
 const $=s=>document.querySelector(s);
-function fail(){const l=$('#loading');if(l)l.hidden=true;$('#err').hidden=false;}
 
-
-/* ===================== Config ===================== */
-// 1 world unit = 10 m. Colours are authored in sRGB and converted to linear on load.
-const TAU=Math.PI*2;
-const EDGE=470;
-const ZB=[58,120,200,290,390,EDGE];
-const RIVER={a:0.35,d:-255,half:18,bank:14};
-const TOWER={y0:6,nseg:10,segH:14.4,gap:1.5,top:160.9};
-const GHOSTS=[{name:'롯데월드타워 555m',th:110/360*TAU,r:46},{name:'부르즈 할리파 828m',th:330/360*TAU,r:46}];
-const ROAD_Y=0.14;
-const CH_SECT=16,BANDS=[0,90,160,240,330,1e9];
-
-const PRESETS={
- day:{skyTop:'#3a72b0',skyHor:'#cfdfeb',skyGround:'#9ea6a6',sunCol:'#fff2d6',sunGlow:0.35,sunDisk:0.6,
-  fog:'#c9d8e6',fogNear:320,fogFar:2600,hemiSky:'#dfeaf6',hemiGround:'#6e6a60',hemiI:0.42,
-  lightCol:'#fff1dc',lightI:2.1,sunDir:[0.5,0.72,0.45],exposure:1.0,
-  glow:0,garden:0,fins:0,street:0,traffic:0,bloom:0,bloomThr:0.9,stars:0,cloud:'#ffffff',cloudOp:0.95,roadGlow:0},
- sunset:{skyTop:'#23315a',skyHor:'#f6a262',skyGround:'#6a5560',sunCol:'#ffb070',sunGlow:1.1,sunDisk:1.0,
-  fog:'#d6a08f',fogNear:600,fogFar:3000,hemiSky:'#f7cfb0',hemiGround:'#4a4666',hemiI:0.7,
-  lightCol:'#ffb070',lightI:2.4,sunDir:[0.97,0.16,-0.05],exposure:1.0,
-  glow:0.28,garden:0.55,fins:0.35,street:0.45,traffic:0.5,bloom:0.45,bloomThr:0.75,stars:0,cloud:'#ffc3a0',cloudOp:0.95,roadGlow:0.05},
- night:{skyTop:'#02050d',skyHor:'#121c33',skyGround:'#05070c',sunCol:'#9fb3e0',sunGlow:0.18,sunDisk:0.9,
-  fog:'#0b1322',fogNear:600,fogFar:3200,hemiSky:'#2a3a5c',hemiGround:'#05060a',hemiI:0.35,
-  lightCol:'#9db3ff',lightI:0.35,sunDir:[0.35,0.55,-0.45],exposure:1.15,
-  glow:0.6,garden:0.8,fins:0.9,street:1.0,traffic:1.0,bloom:0.5,bloomThr:0.78,stars:1,cloud:'#28324a',cloudOp:0.5,roadGlow:0.22}
-};
-const COLOR_KEYS=['skyTop','skyHor','skyGround','sunCol','fog','hemiSky','hemiGround','lightCol','cloud'];
-const NUM_KEYS=['sunGlow','sunDisk','fogNear','fogFar','hemiI','lightI','exposure','glow','garden','fins','street','traffic','bloom','bloomThr','stars','cloudOp','roadGlow'];
-const VIEWS={
- bird:{tx:0,ty:60,tz:0,r:430,phi:1.08,theta:0.75},
- plan:{tx:0,ty:0,tz:0,r:1250,phi:0.3,theta:0.75},
- ground:{tx:0,ty:60,tz:0,r:64.4,phi:2.69,theta:0.4},
- street:{tx:0,ty:14,tz:78,r:26,phi:2.35,theta:0.2},
- top:{tx:0,ty:150,tz:0,r:70,phi:1.25,theta:1.0}
-};
-
-/* ===================== Utilities ===================== */
-function rng(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
-const R=rng(20260920);
-const rand=(a,b)=>a+R()*(b-a);
-const pick=a=>a[Math.floor(R()*a.length)];
-const polar=(r,t)=>[r*Math.sin(t),r*Math.cos(t)];
-const floorQ=h=>Math.max(0.4,Math.round(h/0.4)*0.4);
-const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-const riverD=(x,z)=>Math.abs(x*Math.cos(RIVER.a)-z*Math.sin(RIVER.a)-RIVER.d);
-const smooth=(a,b,x)=>{const t=clamp((x-a)/(b-a),0,1);return t*t*(3-2*t);};
-const lin=h=>new THREE.Color(h).convertSRGBToLinear();
-// value noise + fBm: drives the fractal height field and the ridge lines of the far hills
-function makeNoise(seed){const r=rng(seed),N=256,P=new Float32Array(N*N);for(let i=0;i<N*N;i++)P[i]=r();
-  const at=(x,y)=>P[((y&255)<<8)+(x&255)];
-  return function(x,y){const xi=Math.floor(x),yi=Math.floor(y),xf=x-xi,yf=y-yi,u=xf*xf*(3-2*xf),v=yf*yf*(3-2*yf);
-    return at(xi,yi)*(1-u)*(1-v)+at(xi+1,yi)*u*(1-v)+at(xi,yi+1)*(1-u)*v+at(xi+1,yi+1)*u*v;};}
-const NOISE=makeNoise(9137),NOISE2=makeNoise(5521);
-function fbm(n,x,y,oct){let v=0,a=0.5,f=1,s=0;for(let i=0;i<oct;i++){v+=a*n(x*f,y*f);s+=a;f*=2;a*=0.5;}return v/s;}
-
-function mergeGeos(list,uvScale){
-  let n=0;const parts=list.map(g=>{const q=g.index?g.toNonIndexed():g;n+=q.attributes.position.count;return q;});
-  const pos=new Float32Array(n*3),nor=new Float32Array(n*3);let o=0;
-  parts.forEach(q=>{pos.set(q.attributes.position.array,o*3);nor.set(q.attributes.normal.array,o*3);o+=q.attributes.position.count;});
-  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(pos,3));g.setAttribute('normal',new THREE.BufferAttribute(nor,3));
-  if(uvScale){const uv=new Float32Array(n*2);for(let i=0;i<n;i++){uv[i*2]=pos[i*3]*uvScale;uv[i*2+1]=pos[i*3+2]*uvScale;}g.setAttribute('uv',new THREE.BufferAttribute(uv,2));}
-  return g;
+// The shell in index.html owns the failure panel, because it has to work even
+// when this bundle is the thing that failed.
+function fail(title,advice,detail){
+  if(window.__fail)window.__fail(title||'이 기기에서 3D를 표시할 수 없습니다.',advice||'',detail||'');
+  else{const l=$('#loading');if(l)l.hidden=true;const e=$('#err');if(e)e.hidden=false;}
 }
-function sectorGeo(r0,r1,a0,a1){const g=new THREE.RingGeometry(r0,r1,Math.max(6,Math.round((a1-a0)*r1/3)),1,a0-Math.PI/2,a1-a0);g.rotateX(-Math.PI/2);return g;}
-function radialStrip(a,r0,r1,w,off){const g=new THREE.PlaneGeometry(w,r1-r0);g.rotateX(-Math.PI/2);g.translate(off||0,0,(r0+r1)/2);g.rotateY(a);return g;}
-function flatRing(r0,r1){const g=new THREE.RingGeometry(r0,r1,Math.max(96,Math.round(r1*1.6)));g.rotateX(-Math.PI/2);return g;}
+
+// Startup is several seconds of generation on a cold cache; naming the stage
+// is the difference between "working" and "hung". Each step yields a frame —
+// without that the whole boot runs between two paints and only the last label
+// is ever seen, which is exactly the freeze it is meant to explain.
+const nextFrame=()=>new Promise(r=>requestAnimationFrame(()=>setTimeout(r,0)));
+async function step(label){
+  const el=$('#loadStep');
+  if(el)el.textContent=label?' · '+label:'';
+  await nextFrame();
+}
+
 
 /* ===================== Renderer ===================== */
 const canvas=$('#c');
 let renderer,tier;
 try{({renderer,tier}=await createRenderer(canvas));}
-catch(e){console.error('renderer init failed',e);fail();return;}
-const PR=renderer.getPixelRatio();
+catch(e){console.error('renderer init failed',e);
+  fail('3D 렌더러를 시작할 수 없습니다.','이 브라우저는 WebGPU와 WebGL2를 모두 지원하지 않습니다. 최신 Chrome, Edge, Safari에서 다시 열어 주세요.',String(e&&e.message||e));return;}
 const ANISO=CAPS.maxAnisotropy;
 console.info('렌더러: '+describe(tier));
 const scene=new THREE.Scene();
@@ -107,6 +64,7 @@ scene.fog=new THREE.Fog(0xc9d8e6,320,2600);
 const camera=new THREE.PerspectiveCamera(40,1,0.08,9000);
 
 /* ===================== Facade texture factory ===================== */
+await step('재질 생성');
 function makeCanvas(s){const c=document.createElement('canvas');c.width=c.height=s;return [c,c.getContext('2d')];}
 function tex(cv,srgb){const t=new THREE.CanvasTexture(cv);t.wrapS=t.wrapT=THREE.RepeatWrapping;t.anisotropy=ANISO;if(srgb)t.colorSpace=THREE.SRGBColorSpace;return t;}
 function heightToNormal(hc,strength){
@@ -454,6 +412,7 @@ Object.keys(HDR_FILES).forEach(loadHDR);
 function setEnv(t){REFLECTIVE.forEach(m=>{const first=!m.envMap;m.envMap=t;if(first)m.needsUpdate=true;});}
 
 /* ===================== Master plan ===================== */
+await step('도시 계획');
 const rings=[];
 ZB.slice(0,5).forEach(r=>rings.push({r:r,w:3.4,main:true}));
 for(let i=0;i<5;i++){const a=ZB[i],b=ZB[i+1],n=Math.max(1,Math.round((b-a)/16));for(let j=1;j<n;j++)rings.push({r:a+(b-a)*j/n,w:1.6,main:false});}
@@ -694,6 +653,7 @@ flat(mergeGeos(grassGeos,0.1),M.grass,0.08);
 flat(mergeGeos(pavingGeos,0.15),M.paving,0.1);
 
 /* ===================== Build chunk meshes ===================== */
+await step('건물 배치');
 const GEO={
   box:new THREE.BoxGeometry(1,1,1).translate(0,0.5,0),
   octa:new THREE.CylinderGeometry(0.5,0.5,1,8,1).rotateY(Math.PI/8).translate(0,0.5,0),
@@ -757,6 +717,7 @@ chunks.forEach(c=>{
 });
 
 /* ===================== The tower ===================== */
+await step('타워');
 const tower=new THREE.Group();scene.add(tower);
 const wingDir=k=>k*TAU/3;
 function wingLen(i,k){let c=0;for(let j=1;j<=i;j++)if(j%3===k)c++;return 10-1.85*c;}
@@ -955,6 +916,7 @@ function buildTowerDetail(CB,CT,strut){
 buildTowerDetail(TOWER.y0+TOWER.nseg*TOWER.segH,TOWER.top,dStrut);
 
 /* ===================== Night lights & traffic ===================== */
+await step('조명과 교통');
 function pointCloud(pos,cols,size){
   const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
   if(cols)g.setAttribute('color',new THREE.Float32BufferAttribute(cols,3));
@@ -1039,7 +1001,7 @@ if(document.fonts&&document.fonts.ready)document.fonts.ready.then(()=>allLabels.
   North is -z, east is +x. Sky, light, fog, windows and street lighting blend continuously
   from the sun's elevation; weather (overcast, rain, fog deck) layers on top.
 */
-const SITE={lat:37.5*Math.PI/180,day:264};
+
 const CLOCK={hour:13,target:13,play:false,rate:0.9};   // rate: hours per second while playing
 const WX={overcast:0,rain:0,fog:0,wet:0},WXT={overcast:0,rain:0,fog:0},WX_PRESET={clear:{overcast:0,rain:0,fog:0},rain:{overcast:1,rain:1,fog:0.35},fog:{overcast:0.7,rain:0,fog:1}};
 let wxKey='clear',flash=0,flashT=4;
@@ -1606,6 +1568,7 @@ function sectionStep(dt){
 }
 
 /* ===================== Post-processing ===================== */
+await step('화면 효과');
 // AO between the buildings, reflections on the wet road, temporal AA — all in
 // render/post.js. Falls back to plain forward rendering if the graph refuses
 // to compile, so a driver quirk costs effects rather than the whole scene.
@@ -1696,4 +1659,7 @@ function loop(ts){
 const ld=$('#loading');if(ld)ld.hidden=true;$('#bar').hidden=false;
 loop();
 }
-boot().catch(err=>{console.error(err);const l=document.querySelector('#loading');if(l)l.hidden=true;const e=document.querySelector('#err');if(e)e.hidden=false;});
+boot().catch(err=>{
+  console.error(err);
+  if(window.__fail)window.__fail('도시를 짓는 중 문제가 발생했습니다.','새로고침해도 같은 화면이면 아래 내용을 알려 주세요.',String(err&&err.stack||err));
+});

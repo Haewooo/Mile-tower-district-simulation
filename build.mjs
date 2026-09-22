@@ -11,7 +11,7 @@
  * separately and committed; the app bundle is rebuilt constantly.
  */
 import * as esbuild from 'esbuild';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';

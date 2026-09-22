@@ -12,10 +12,12 @@
     "watch": "node build.mjs app --watch",
     "serve": "python3 -m http.server 8000",
     "dev": "node build.mjs app --watch --serve",
-    "check": "node scripts/check-tsl.mjs"
+    "check": "node scripts/check-tsl.mjs",
+    "lint": "eslint src build.mjs scripts"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",
+    "eslint": "^10.11.0",
     "three": "0.186.0"
   }
 }
